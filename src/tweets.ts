@@ -34,8 +34,13 @@ export const profile = async (req: Request, res: Response) => {
 	}
 
 	// Get the profile for the user
-	const scraper = new Scraper()
-	const profile = await scraper.getProfile(twitterName)
+	let profile: Profile
+	try {
+		const scraper = new Scraper()
+		profile = await scraper.getProfile(twitterName)
+	} catch (e) {
+		return res.status(404).send({error: 'User not found'})
+	}
 
 	// Cache the profile
 	UserProfileCache[twitterName] = {
@@ -59,6 +64,7 @@ export const tweets = async (req: Request, res: Response) => {
 
 	// Get the tweets for the user
 	const tweets = await getTweetsForUser(twitterName)
+	if (!tweets) return res.status(404).send({error: 'User not found'})
 
 	// Cache the tweets
 	UserTweetCache[twitterName] = {
@@ -82,6 +88,7 @@ export const threads = async (req: Request, res: Response) => {
 
 	// Get the tweets for the user
 	const tweets = await getTweetsForUser(twitterName)
+	if (!tweets) return res.status(404).send({error: 'User not found'})
 
 	// Get threads
 	const threads = getThreadsFromTweets(tweets, twitterName)
@@ -98,14 +105,22 @@ export const threads = async (req: Request, res: Response) => {
 
 /* --- Helpers --- */
 
-const getTweetsForUser = async (twitterName: string) => {
-	const scraper = new Scraper()
-	const tweetGenerator = scraper.getTweets(twitterName, 200, true)
-	const tweetResults = await Promise.all(_.times(200, tweetGenerator.next))
-	const tweets = tweetResults
-		.map((tweetResult) => tweetResult.value)
-		.filter((tweet) => tweet && !tweet.isReteweet)
-	return tweets
+const getTweetsForUser = async (
+	twitterName: string
+): Promise<Tweet[] | undefined> => {
+	try {
+		const scraper = new Scraper()
+		const tweetGenerator = scraper.getTweets(twitterName, 200, true)
+		const tweetResults = await Promise.all(
+			_.times(200, tweetGenerator.next)
+		)
+		const tweets = tweetResults
+			.map((tweetResult) => tweetResult.value)
+			.filter((tweet) => tweet && !tweet.isReteweet)
+		return tweets
+	} catch (e) {
+		return undefined
+	}
 }
 
 /** Extracts threads by a user from a set of Tweets */
@@ -141,7 +156,7 @@ const rebuildThreadFromTweet = (
 	tweet: Tweet,
 	twitterName: string
 ): Tweet[] | undefined => {
-	const thread: Tweet[] = [tweet]
+	let thread: Tweet[] = [tweet]
 	let currentTweet = tweet
 
 	// Recursively add in-reply-to-tweets to the thread
@@ -154,20 +169,12 @@ const rebuildThreadFromTweet = (
 		currentTweet = inReplyToTweet
 	}
 
-	// Trim tweets at start that are not by the user
-	while (thread.length > 0 && thread[0].username !== twitterName) {
-		thread.shift()
-	}
+	// Filter out tweets not by the user
+	thread = thread.filter(
+		(tweet) => tweet.username?.toLowerCase() === twitterName.toLowerCase()
+	)
 
-	// Trim tweets at end that are not by the user
-	while (
-		thread.length > 0 &&
-		thread[thread.length - 1].username !== twitterName
-	) {
-		thread.pop()
-	}
-
-	// Return empty if thread has only one tweet after trimming
+	// Return if thread has <2 tweets after trimming
 	if (thread.length < 2) return undefined
 
 	// Reverse & return the thread
