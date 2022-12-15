@@ -12,10 +12,13 @@ const UserThreadCache: UserCache<Tweet[][]> = {}
 const UserProfileCache: UserCache<Profile> = {}
 
 /** Checks if a cache is stale (>1 week old) */
-const isCacheStale = <T>(cache: UserCacheRecord<T>) => {
+const isCacheStale = <T>(
+	cache: UserCacheRecord<T>,
+	threshold: '24h' | '7d' = '7d'
+) => {
 	const now = performance.now()
 	const cacheAge = now - cache.timestamp
-	return cacheAge > 1000 * 60 * 60 * 24 * 7
+	return cacheAge > 1000 * 60 * 60 * 24 * (threshold === '7d' ? 7 : 1)
 }
 
 /* --- Routes --- */
@@ -24,12 +27,24 @@ export const profile = async (req: Request, res: Response) => {
 	// Get Twitter name
 	const {twitterName} = req.params
 
+	// Check cache
+	const cache = UserProfileCache[twitterName]
+	if (cache && !isCacheStale(cache, '24h')) {
+		return res.send({cache: true, profile: cache.items})
+	}
+
 	// Get the profile for the user
 	const scraper = new Scraper()
 	const profile = await scraper.getProfile(twitterName)
 
+	// Cache the profile
+	UserProfileCache[twitterName] = {
+		items: profile,
+		timestamp: performance.now()
+	}
+
 	// Return the profile as a JSON object
-	res.send(profile)
+	res.send({cache: false, profile})
 }
 
 export const tweets = async (req: Request, res: Response) => {
@@ -78,7 +93,7 @@ export const threads = async (req: Request, res: Response) => {
 	}
 
 	// Return the threads as a JSON array
-	return res.send({cache: false, threads})
+	res.send({cache: false, threads})
 }
 
 /* --- Helpers --- */
