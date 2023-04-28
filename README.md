@@ -1,8 +1,8 @@
 # FigChat Proxy
 
-FigChat Proxy lets you use FigChat with Anthropic Claude.
+FigChat Proxy lets you use [FigChat](https://github.com/fableai/figchat) with Anthropic Claude.
 
-To run FigChat proxy:
+### Running FigChat Proxy
 
 ```
 git clone https://github.com/fableai/figchat-proxy
