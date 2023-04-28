@@ -1,70 +1,103 @@
 import express from 'express'
 import compression from 'compression'
-import cors from 'cors'
-import {nanoid} from 'nanoid'
 import dotenv from 'dotenv'
-import {profile, threads, tweets} from './tweets'
+import {Client, HUMAN_PROMPT} from '@anthropic-ai/sdk'
+import _ from 'lodash'
 
 /* -- Environment -- */
 
 dotenv.config()
-export const isProduction = process.env.NODE_ENV === 'production'
-export const DomainWhitelist = JSON.parse(process.env.DOMAIN_WHITELIST ?? '[]')
-export const Port = process.env.PORT || 19999
-
-// Add ID fields to Requests
-declare global {
-	// eslint-disable-next-line @typescript-eslint/no-namespace
-	namespace Express {
-		interface Request {
-			requestId?: string
-			sessionId?: string
-		}
-	}
-}
+export const Port = process.env.PORT || 5555
 
 /* -- App Setup -- */
 
 const app = express()
 app.use(compression())
 app.disable('x-powered-by')
-
-// Trust our proxy (our load balancer) so we can receive client IP addresses
-app.set('trust proxy', 1)
-
-// Parse JSON bodies
 app.use(express.json())
-
-// Log all requests
-app.use((req, _res, next) => {
-	req.requestId = nanoid(6)
-	console.log(
-		`[${req.requestId}]`,
-		`↘ Request Received — ${req.method} ${req.path}`
-	)
-	next()
-})
-
-/* -- CORS -- */
-
-// nathandavison.com/blog/be-careful-with-authenticated-cors-and-secrets-like-csrf-tokens
-// stackoverflow.com/a/53953993
-
-/* Access-Control-Allow-Origin */
-app.use(cors({origin: isProduction ? DomainWhitelist : true}))
 
 /* -- App Routes -- */
 
-// Health check
+// Health Check
 app.get('/', (_req, res) => res.send('👍'))
 
-// GET Profile
-app.get('/profile/:twitterName', profile)
+// Anthropic Streaming Proxy
+app.post('/v1/complete', (req, res) => {
+	res.setHeader('Cache-Control', 'no-cache')
+	res.setHeader('Content-Type', 'text/event-stream')
+	res.setHeader('Access-Control-Allow-Origin', '*')
+	res.setHeader('Connection', 'keep-alive')
+	res.flushHeaders() // flush the headers to establish SSE with client
 
-// GET Tweets
-app.get('/tweets/:twitterName', tweets)
+	// Extract request parameters
+	const {'x-api-key': apiKey} = req.headers
+	const {
+		prompt,
+		model,
+		max_tokens_to_sample = 3000,
+		stop_sequences = [HUMAN_PROMPT],
+		temperature = 1,
+		top_p = -1,
+		stream = true
+	} = req.body as {
+		prompt: string
+		model: 'claude-v1' | 'claude-instant-v1'
+		stop_sequences: string[]
+		max_tokens_to_sample?: number
+		temperature?: number
+		top_p?: number
+		stream?: boolean
+	}
 
-// GET Threads
-app.get('/threads/:twitterName', threads)
+	// Validate request parameters
+	if (
+		!_.isString(apiKey) ||
+		!_.isString(prompt) ||
+		!_.isArray(stop_sequences) ||
+		!_.isString(model) ||
+		!stream ||
+		!_.isNumber(max_tokens_to_sample) ||
+		!_.isNumber(temperature) ||
+		!_.isNumber(top_p)
+	) {
+		res.write('data: Invalid Request\n\n')
+		res.end()
+		return
+	}
 
-app.listen(Port, () => console.log(`Server listening on port ${Port}`))
+	// Create a new client
+	const client = new Client(apiKey)
+
+	// Run completion
+	client
+		.completeStream(
+			{
+				prompt,
+				stop_sequences,
+				max_tokens_to_sample,
+				model,
+				temperature,
+				top_p
+			},
+			{
+				onUpdate: async (completion) => {
+					// Send completion via SSE
+					res.write(`data: ${JSON.stringify(completion)}\n\n`)
+				}
+			}
+		)
+		.then(() => {
+			// Close SSE connection
+			res.write(`data: [DONE]\n\n`)
+			res.end()
+		})
+		.catch(() => {
+			// Close SSE connection
+			res.end()
+		})
+})
+
+app.listen(Port, () =>
+	// eslint-disable-next-line no-console
+	console.log(`Server listening on port ${process.env.PORT || 5555}`)
+)
