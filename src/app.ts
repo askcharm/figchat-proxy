@@ -1,5 +1,6 @@
 import express from 'express'
 import compression from 'compression'
+import cors from 'cors'
 import dotenv from 'dotenv'
 import {Client, HUMAN_PROMPT} from '@anthropic-ai/sdk'
 import _ from 'lodash'
@@ -15,6 +16,14 @@ const app = express()
 app.use(compression())
 app.disable('x-powered-by')
 app.use(express.json())
+
+/* -- CORS -- */
+
+// nathandavison.com/blog/be-careful-with-authenticated-cors-and-secrets-like-csrf-tokens
+// stackoverflow.com/a/53953993
+
+/* Access-Control-Allow-Origin */
+app.use(cors({origin: true}))
 
 /* -- App Routes -- */
 
