@@ -92,6 +92,7 @@ app.post('/v1/complete', (req, res) => {
 				onUpdate: async (completion) => {
 					// Send completion via SSE
 					res.write(`data: ${JSON.stringify(completion)}\n\n`)
+					res.flush()
 				}
 			}
 		)
